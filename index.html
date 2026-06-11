@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voting Game</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
+
+    <!-- ============================================================
+        FIREBASE CONFIG — replace with your own project's config
+        Get this from: Firebase Console → Project Settings → Your apps → SDK setup
+        ============================================================ -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+      import { getDatabase, ref, set, get, onValue, update, runTransaction }
+        from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyAZP7bEXkgQnaRjtTcffdWUJbNqpW4_tUw",
+        authDomain: "voting-app-2026-06.firebaseapp.com",
+        databaseURL: "https://voting-app-2026-06-default-rtdb.firebaseio.com",
+        projectId: "voting-app-2026-06",
+        storageBucket: "voting-app-2026-06.firebasestorage.app",
+        messagingSenderId: "736864533190",
+        appId: "1:736864533190:web:c541d53cb231d1893375c7"
+      };
+
+      /* ============================================================
+        ROOM ID — change this string to run separate concurrent games
+        e.g. "office-game-2024" or generate dynamically via URL param
+        ============================================================ */
+      const ROOM = (() => {
+        const p = new URLSearchParams(window.location.search).get('room');
+        return p ? p.replace(/[^a-zA-Z0-9_-]/g,'') : 'default-room';
+      })();
+
+      const app = initializeApp(firebaseConfig);
+      const db  = getDatabase(app);
+      const roomRef = () => ref(db, `rooms/${ROOM}`);
+      const stateRef = () => ref(db, `rooms/${ROOM}/state`);
+
+      // ── helpers ──────────────────────────────────────────────────
+      async function loadState() {
+        const snap = await get(stateRef());
+        return snap.exists() ? snap.val() : null;
+      }
+      async function saveState(state) {
+        await set(stateRef(), state);
+      }
+      function subscribeState(cb) {
+        onValue(stateRef(), snap => cb(snap.exists() ? snap.val() : null));
+      }
+
+      // ── expose to global scope so the rest of the script can use it ──
+      window._fb = { loadState, saveState, subscribeState, ROOM };
+    </script>
+
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      :root {
+        --bg:       #0D1117;
+        --surface:  #161B22;
+        --surface2: #1C2330;
+        --border:   rgba(255,255,255,0.08);
+        --border2:  rgba(255,255,255,0.14);
+        --text:     #E6EDF3;
+        --muted:    #8B949E;
+        --accent:   #5C6BC0;
+        --accent-l: #7986CB;
+        --danger:   #FF5252;
+        --success:  #4CAF50;
+        --amber:    #FFB300;
+        --radius:   10px;
+        --radius-lg:14px;
+      }
+
+      body {
+        font-family: 'Space Grotesk', system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 2rem 1rem 4rem;
+      }
+
+      #app {
+        width: 100%;
+        max-width: 480px;
+      }
+
+      .screen { display: none; }
+      .screen.active { display: block; }
+
+      /* typography */
+      .eyebrow {
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent-l);
+        margin-bottom: 6px;
+      }
+      h1 { font-size: 26px; font-weight: 600; line-height: 1.2; margin-bottom: 6px; }
+      h2 { font-size: 19px; font-weight: 500; margin-bottom: 0.75rem; }
+      .sub { font-size: 14px; color: var(--muted); margin-bottom: 1.5rem; line-height: 1.5; }
+
+      /* card */
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+      }
+      .card-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        margin-bottom: 10px;
+      }
+
+      /* inputs */
+      input[type=text], select {
+        width: 100%;
+        background: var(--surface2);
+        border: 1px solid var(--border2);
+        border-radius: var(--radius);
+        color: var(--text);
+        font-family: inherit;
+        font-size: 15px;
+        padding: 10px 14px;
+        outline: none;
+        transition: border-color 0.15s;
+        margin-bottom: 0.75rem;
+      }
+      input[type=text]:focus, select:focus { border-color: var(--accent-l); }
+
+      /* buttons */
+      button { font-family: inherit; cursor: pointer; transition: opacity 0.15s, transform 0.1s; }
+      button:active { transform: scale(0.97); }
+
+      .btn-primary {
+        width: 100%;
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: var(--radius);
+        padding: 11px 20px;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .btn-primary:hover { opacity: 0.88; }
+      .btn-primary:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+      .btn-danger {
+        width: 100%;
+        background: var(--danger);
+        color: #fff;
+        border: none;
+        border-radius: var(--radius);
+        padding: 11px 20px;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .btn-danger:hover { opacity: 0.88; }
+
+      .btn-ghost {
+        flex: 1;
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border2);
+        border-radius: var(--radius);
+        padding: 10px 16px;
+        font-size: 14px;
+      }
+      .btn-ghost:hover { background: var(--surface2); }
+
+      .btn-confirm {
+        flex: 1;
+        background: var(--danger);
+        color: #fff;
+        border: none;
+        border-radius: var(--radius);
+        padding: 10px 16px;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .btn-confirm:hover { opacity: 0.88; }
+
+      /* badges */
+      .badge {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 3px 9px;
+        border-radius: 99px;
+      }
+      .badge-admin   { background: rgba(92,107,192,0.2); color: var(--accent-l); }
+      .badge-voted   { background: rgba(76,175,80,0.15); color: #81C784; }
+      .badge-waiting { background: rgba(139,148,158,0.15); color: var(--muted); }
+
+      /* status bar */
+      .status-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 10px 14px;
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 1rem;
+      }
+      .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+      .dot-green  { background: var(--success); }
+      .dot-amber  { background: var(--amber); }
+      .dot-accent { background: var(--accent-l); }
+
+      /* avatar */
+      .avatar {
+        width: 40px; height: 40px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 600; font-size: 15px;
+        flex-shrink: 0;
+      }
+
+      /* lobby rows */
+      .player-row {
+        display: flex; align-items: center; gap: 10px;
+        padding: 9px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 14px;
+      }
+      .player-row:last-child { border-bottom: none; }
+      .player-row-name { flex: 1; font-weight: 500; }
+
+      /* vote grid */
+      .vote-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+        gap: 10px;
+        margin-bottom: 1rem;
+      }
+      .vote-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 16px 12px;
+        text-align: center;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .vote-card:hover { border-color: var(--accent-l); background: var(--surface2); }
+      .vote-card.selected { border: 2px solid var(--accent-l); background: rgba(92,107,192,0.12); }
+      .vote-card.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+      .vote-card .vname { font-size: 14px; font-weight: 500; margin-top: 8px; }
+      .vote-card .vsub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+      /* confirm panel */
+      .confirm-panel {
+        background: var(--surface2);
+        border: 1px solid var(--border2);
+        border-radius: var(--radius-lg);
+        padding: 1.25rem;
+        text-align: center;
+        margin-bottom: 1rem;
+      }
+      .confirm-panel .confirm-name {
+        font-size: 20px; font-weight: 600; margin: 6px 0 1rem;
+      }
+      .btn-row { display: flex; gap: 10px; }
+
+      /* result bars */
+      .result-row {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .result-row:last-child { border-bottom: none; }
+      .result-bar-track {
+        flex: 1;
+        background: var(--surface2);
+        border-radius: 4px;
+        height: 6px;
+        overflow: hidden;
+      }
+      .result-bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        background: var(--accent);
+        transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+      }
+      .result-bar-fill.top { background: var(--danger); }
+      .result-count {
+        font-size: 14px; font-weight: 600;
+        min-width: 28px; text-align: right;
+      }
+      .result-count.top { color: var(--danger); }
+
+      /* room pill */
+      .room-pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 99px;
+        padding: 4px 12px;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 1.25rem;
+      }
+      .room-pill strong { color: var(--text); }
+
+      .divider { height: 1px; background: var(--border); margin: 1rem 0; }
+
+      .tie-notice {
+        background: rgba(255,179,0,0.1);
+        border: 1px solid rgba(255,179,0,0.25);
+        color: var(--amber);
+        border-radius: var(--radius);
+        padding: 10px 14px;
+        font-size: 13px;
+        margin-bottom: 1rem;
+      }
+
+      /* winner card */
+      .winner-card {
+        text-align: center;
+        padding: 2.5rem 1.5rem;
+      }
+      .winner-avatar {
+        width: 72px; height: 72px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 26px; font-weight: 700;
+        margin: 0 auto 1rem;
+      }
+      .winner-name { font-size: 26px; font-weight: 600; }
+      .winner-sub  { font-size: 14px; color: var(--muted); margin-top: 6px; }
+
+      .spinner {
+        display: inline-block;
+        width: 18px; height: 18px;
+        border: 2px solid var(--border2);
+        border-top-color: var(--accent-l);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        vertical-align: middle;
+        margin-right: 8px;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+
+      <!-- LOADING -->
+      <div id="screen-loading" class="screen active">
+        <p style="color:var(--muted);margin-top:3rem;"><span class="spinner"></span>Connecting...</p>
+      </div>
+
+      <!-- SIGN IN -->
+      <div id="screen-signin" class="screen">
+        <div class="eyebrow">Voting Game</div>
+        <h1>Join the room</h1>
+        <p class="sub">Enter your name. The first person to join becomes the admin who controls the rounds.</p>
+        <div id="room-info" class="room-pill"></div>
+        <div class="card">
+          <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:6px;">Your name</label>
+          <input type="text" id="signin-name" placeholder="e.g. Alex" maxlength="24" />
+          <button class="btn-primary" id="join-btn" onclick="signIn()">Join room</button>
+        </div>
+        <div id="waiting-box" class="card" style="display:none;">
+          <div class="card-label">Players in room</div>
+          <div id="waiting-list"></div>
+        </div>
+      </div>
+
+      <!-- LOBBY (admin) -->
+      <div id="screen-lobby" class="screen">
+        <div class="eyebrow" id="lobby-round-label">Round 1</div>
+        <h1>Lobby <span class="badge badge-admin">admin</span></h1>
+        <p class="sub" id="lobby-sub">Waiting for players to join.</p>
+        <div id="room-info-lobby" class="room-pill"></div>
+        <div class="card">
+          <div class="card-label">Players</div>
+          <div id="lobby-player-list"></div>
+        </div>
+        <button class="btn-primary" id="start-vote-btn" onclick="startVoting()">Start voting round</button>
+      </div>
+
+      <!-- WAITING (non-admin pre-vote) -->
+      <div id="screen-waiting" class="screen">
+        <div class="eyebrow" id="waiting-round-label">Round 1</div>
+        <h1>Waiting for admin</h1>
+        <p class="sub">The admin hasn't started the voting round yet.</p>
+        <div id="room-info-waiting" class="room-pill"></div>
+        <div class="card">
+          <div class="card-label">Players in room</div>
+          <div id="waiting-player-list"></div>
+        </div>
+        <div class="status-bar">
+          <span class="dot dot-amber"></span>
+          <span>Waiting for the voting round to begin...</span>
+        </div>
+      </div>
+
+      <!-- VOTING (player) -->
+      <div id="screen-voting" class="screen">
+        <div class="eyebrow" id="vote-round-label">Round 1</div>
+        <h1>Cast your vote</h1>
+        <p class="sub" id="vote-sub">Select a player to vote out, then confirm.</p>
+        <div id="voted-notice" class="status-bar" style="display:none;">
+          <span class="dot dot-green"></span>
+          <span>Your vote has been cast. Waiting for others...</span>
+        </div>
+        <div id="vote-area">
+          <div class="vote-grid" id="vote-grid"></div>
+          <div id="confirm-panel" class="confirm-panel" style="display:none;">
+            <p style="font-size:13px;color:var(--muted);">You're voting for:</p>
+            <p class="confirm-name" id="confirm-name">—</p>
+            <div class="btn-row">
+              <button class="btn-ghost" onclick="cancelVote()">Cancel</button>
+              <button class="btn-confirm" onclick="confirmVote()">Confirm vote</button>
+            </div>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="status-bar">
+          <span class="dot dot-amber"></span>
+          <span id="vote-progress-text">0 of 0 have voted</span>
+        </div>
+      </div>
+
+      <!-- ADMIN MONITOR -->
+      <div id="screen-monitor" class="screen">
+        <div class="eyebrow" id="monitor-round-label">Round 1</div>
+        <h1>Monitoring <span class="badge badge-admin">admin</span></h1>
+        <p class="sub">Wait for all players to vote, then reveal results.</p>
+        <div class="status-bar" id="monitor-status">
+          <span class="dot dot-amber" id="monitor-dot"></span>
+          <span id="monitor-status-text">0 of 0 players have voted</span>
+        </div>
+        <div class="card">
+          <div class="card-label">Player status</div>
+          <div id="monitor-list"></div>
+        </div>
+        <button class="btn-primary" id="reveal-btn" disabled onclick="revealResults()">Waiting for votes…</button>
+      </div>
+
+      <!-- RESULTS -->
+      <div id="screen-results" class="screen">
+        <div class="eyebrow" id="results-round-label">Round 1 — Results</div>
+        <h1>The votes are in</h1>
+        <p class="sub">Sorted by votes received.</p>
+        <div id="tie-notice" class="tie-notice" style="display:none;">
+          <strong>Tie!</strong> Select who gets eliminated below.
+        </div>
+        <select id="tie-select" style="display:none;"></select>
+        <div class="card" id="results-list"></div>
+        <div id="admin-actions" style="display:none;margin-top:1rem;">
+          <button class="btn-danger" id="elim-btn" onclick="eliminatePlayer()">Eliminate &amp; start next round</button>
+        </div>
+        <div id="player-wait" class="status-bar" style="display:none;margin-top:1rem;">
+          <span class="dot dot-accent"></span>
+          <span>Waiting for admin to start next round...</span>
+        </div>
+      </div>
+
+      <!-- GAME OVER -->
+      <div id="screen-gameover" class="screen">
+        <div class="eyebrow">Game over</div>
+        <h1>Winner!</h1>
+        <p class="sub">Only one player remains.</p>
+        <div class="card winner-card">
+          <div class="winner-avatar" id="winner-avatar"></div>
+          <p class="winner-name" id="winner-name"></p>
+          <p class="winner-sub">survived all rounds</p>
+        </div>
+        <div id="gameover-admin" style="display:none;margin-top:1rem;">
+          <button class="btn-primary" onclick="fullReset()">Start a new game</button>
+        </div>
+      </div>
+
+    </div>
+
+    <script>
+      // Wait for Firebase module to set window._fb
+      function waitForFirebase(cb) {
+        if (window._fb) { cb(); return; }
+        setTimeout(() => waitForFirebase(cb), 80);
+      }
+
+      const COLORS = ['#5C6BC0','#EF5350','#26A69A','#FFA726','#EC407A','#42A5F5','#66BB6A','#8D6E63'];
+      let localPlayer = null;
+      let pendingVote = null;
+      let unsubscribe = null;
+
+      function initials(n) {
+        return (n||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+      }
+      function colorFor(n) {
+        let h=0; for (const c of (n||'')) h=(h*31+c.charCodeAt(0))&0xffff;
+        return COLORS[h%COLORS.length];
+      }
+      function avatarEl(name, size=40, fs=15) {
+        const d = document.createElement('div');
+        d.className = 'avatar';
+        d.style.cssText = `width:${size}px;height:${size}px;font-size:${fs}px;background:${colorFor(name)}22;color:${colorFor(name)};`;
+        d.textContent = initials(name);
+        return d;
+      }
+      function avatarHtml(name, size=40, fs=15) {
+        return `<div class="avatar" style="width:${size}px;height:${size}px;font-size:${fs}px;background:${colorFor(name)}22;color:${colorFor(name)};">${initials(name)}</div>`;
+      }
+
+      function defaultState() {
+        return { phase:'lobby', round:1, players:[], votes:{}, revealed:false, eliminated:[] };
+      }
+
+      function showScreen(id) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+      }
+
+      function roomPillHtml(room) {
+        return `Room: <strong>${room}</strong>`;
+      }
+
+      function render(state) {
+        if (!state) { showScreen('screen-signin'); return; }
+        const ROOM = window._fb.ROOM;
+        ['room-info','room-info-lobby','room-info-waiting'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = roomPillHtml(ROOM);
+        });
+
+        if (!localPlayer) {
+          renderSignin(state); return;
+        }
+        const me = (state.players||[]).find(p => p.name === localPlayer.name);
+        if (!me) { renderSignin(state); return; }
+
+        if (state.phase === 'gameover') { renderGameOver(state, me); return; }
+
+        if (state.phase === 'lobby') {
+          if (me.isAdmin) renderLobby(state);
+          else renderWaiting(state);
+          return;
+        }
+        if (state.phase === 'voting') {
+          if (me.isAdmin) renderMonitor(state);
+          else renderVoting(state, me);
+          return;
+        }
+        if (state.phase === 'results') {
+          renderResults(state, me); return;
+        }
+      }
+
+      function renderSignin(state) {
+        showScreen('screen-signin');
+        const ROOM = window._fb.ROOM;
+        document.getElementById('room-info').innerHTML = roomPillHtml(ROOM);
+        const players = state?.players || [];
+        const box = document.getElementById('waiting-box');
+        if (players.length > 0) {
+          box.style.display = 'block';
+          document.getElementById('waiting-list').innerHTML = players.map(p =>
+            `<div class="player-row">${avatarHtml(p.name,28,11)}<span class="player-row-name">${p.name}</span>${p.isAdmin?'<span class="badge badge-admin">admin</span>':''}</div>`
+          ).join('');
+        } else { box.style.display = 'none'; }
+      }
+
+      function renderLobby(state) {
+        showScreen('screen-lobby');
+        const active = (state.players||[]).filter(p => !(state.eliminated||[]).includes(p.name));
+        document.getElementById('lobby-round-label').textContent = `Round ${state.round}`;
+        document.getElementById('lobby-sub').textContent = `${active.length} player(s) ready.`;
+        document.getElementById('lobby-player-list').innerHTML = active.map(p =>
+          `<div class="player-row">${avatarHtml(p.name,28,11)}<span class="player-row-name">${p.name}</span>${p.isAdmin?'<span class="badge badge-admin">admin</span>':'<span class="badge badge-waiting">player</span>'}</div>`
+        ).join('');
+        const canStart = active.length >= 3;
+        const btn = document.getElementById('start-vote-btn');
+        btn.disabled = !canStart;
+        btn.textContent = canStart ? 'Start voting round' : 'Need at least 3 players';
+      }
+
+      function renderWaiting(state) {
+        showScreen('screen-waiting');
+        document.getElementById('waiting-round-label').textContent = `Round ${state.round}`;
+        const active = (state.players||[]).filter(p => !(state.eliminated||[]).includes(p.name));
+        document.getElementById('waiting-player-list').innerHTML = active.map(p =>
+          `<div class="player-row">${avatarHtml(p.name,28,11)}<span class="player-row-name">${p.name}</span>${p.isAdmin?'<span class="badge badge-admin">admin</span>':''}</div>`
+        ).join('');
+      }
+
+      function renderVoting(state, me) {
+        showScreen('screen-voting');
+        document.getElementById('vote-round-label').textContent = `Round ${state.round}`;
+        const votes = state.votes || {};
+        const hasVoted = !!votes[me.name];
+        const active = (state.players||[]).filter(p => !(state.eliminated||[]).includes(p.name) && !p.isAdmin);
+        const voterCount = (state.players||[]).filter(p => !(state.eliminated||[]).includes(p.name) && !p.isAdmin).length;
+        const votedCount = Object.keys(votes).length;
+
+        document.getElementById('voted-notice').style.display = hasVoted ? 'flex' : 'none';
+        document.getElementById('vote-area').style.opacity = hasVoted ? '0.45' : '1';
+        document.getElementById('vote-area').style.pointerEvents = hasVoted ? 'none' : 'auto';
+        document.getElementById('confirm-panel').style.display = 'none';
+        document.getElementById('vote-progress-text').textContent = `${votedCount} of ${voterCount} have voted`;
+
+        document.getElementById('vote-grid').innerHTML = active.map(p => {
+          const isSelf = p.name === me.name;
+          return `<div class="vote-card ${isSelf?'disabled':''}" onclick="selectTarget('${p.name.replace(/'/g,"\\'")}')">
+            ${avatarHtml(p.name,40,16)}
+            <p class="vname">${p.name}</p>
+            ${isSelf?'<p class="vsub">you</p>':''}
+          </div>`;
+        }).join('');
+      }
+
+      function renderMonitor(state) {
+        showScreen('screen-monitor');
+        document.getElementById('monitor-round-label').textContent = `Round ${state.round}`;
+        const active = (state.players||[]).filter(p => !(state.eliminated||[]).includes(p.name) && !p.isAdmin);
+        const votes = state.votes || {};
+        const total = active.length;
+        const done  = Object.keys(votes).length;
+        const allVoted = done === total && total > 0;
+
+        document.getElementById('monitor-status-text').textContent = allVoted ? 'All players have voted!' : `${done} of ${total} players have voted`;
+        document.getElementById('monitor-dot').className = `dot ${allVoted?'dot-green':'dot-amber'}`;
+
+        document.getElementById('monitor-list').innerHTML = active.map(p =>
+          `<div class="player-row">${avatarHtml(p.name,28,11)}<span class="player-row-name">${p.name}</span><span class="badge ${votes[p.name]?'badge-voted':'badge-waiting'}">${votes[p.name]?'voted':'waiting'}</span></div>`
+        ).join('');
+
+        const btn = document.getElementById('reveal-btn');
+        btn.disabled = !allVoted;
+        btn.textContent = allVoted ? 'Reveal results to all' : `Waiting for votes (${done}/${total})`;
+      }
+
+      function tally(state) {
+        const active = (state.players||[]).filter(p => !(state.eliminated||[]).includes(p.name) && !p.isAdmin);
+        const counts = {};
+        active.forEach(p => counts[p.name] = 0);
+        Object.values(state.votes||{}).forEach(v => { if (counts[v] !== undefined) counts[v]++; });
+        return counts;
+      }
+
+      function renderResults(state, me) {
+        showScreen('screen-results');
+        document.getElementById('results-round-label').textContent = `Round ${state.round} — Results`;
+        const counts = tally(state);
+        const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+        const max = sorted[0]?.[1] ?? 0;
+        const tied = sorted.filter(([,v]) => v === max);
+        const hasTie = tied.length > 1 && max > 0;
+        const total = Object.values(counts).reduce((a,b)=>a+b,0);
+
+        document.getElementById('tie-notice').style.display = (hasTie && me.isAdmin) ? 'block' : 'none';
+        const tieSelEl = document.getElementById('tie-select');
+        if (hasTie && me.isAdmin) {
+          tieSelEl.style.display = 'block';
+          tieSelEl.innerHTML = tied.map(([n]) => `<option value="${n}">${n}</option>`).join('');
+        } else { tieSelEl.style.display = 'none'; }
+
+        document.getElementById('results-list').innerHTML = sorted.map(([name, v]) => {
+          const pct = total > 0 ? Math.round(v/total*100) : 0;
+          const isTop = v === max && max > 0;
+          return `<div class="result-row">
+            ${avatarHtml(name,32,12)}
+            <span style="font-size:14px;font-weight:500;min-width:90px;margin-left:8px;">${name}</span>
+            <div class="result-bar-track"><div class="result-bar-fill ${isTop?'top':''}" style="width:${pct}%"></div></div>
+            <span class="result-count ${isTop?'top':''}">${v}</span>
+          </div>`;
+        }).join('');
+
+        document.getElementById('admin-actions').style.display = me.isAdmin ? 'block' : 'none';
+        document.getElementById('player-wait').style.display = me.isAdmin ? 'none' : 'flex';
+
+        const eBtn = document.getElementById('elim-btn');
+        if (hasTie) eBtn.textContent = 'Eliminate selected & start next round';
+        else eBtn.textContent = `Eliminate ${sorted[0]?.[0]??'—'} & start next round`;
+      }
+
+      function renderGameOver(state, me) {
+        showScreen('screen-gameover');
+        const w = state.winner || '?';
+        document.getElementById('winner-name').textContent = w;
+        const av = document.getElementById('winner-avatar');
+        av.style.cssText = `width:72px;height:72px;font-size:26px;font-weight:700;background:${colorFor(w)}22;color:${colorFor(w)};border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1rem;`;
+        av.textContent = initials(w);
+        document.getElementById('gameover-admin').style.display = (me && me.isAdmin) ? 'block' : 'none';
+      }
+
+      // ── actions ───────────────────────────────────────────────────
+      async function signIn() {
+        const nameEl = document.getElementById('signin-name');
+        const name = nameEl.value.trim();
+        if (!name) return;
+        const btn = document.getElementById('join-btn');
+        btn.disabled = true;
+
+        const state = await window._fb.loadState() || defaultState();
+        if ((state.players||[]).find(p => p.name.toLowerCase() === name.toLowerCase())) {
+          alert('That name is already taken.');
+          btn.disabled = false; return;
+        }
+        const isAdmin = (state.players||[]).length === 0;
+        if (!state.players) state.players = [];
+        state.players.push({ name, isAdmin, color: colorFor(name) });
+        await window._fb.saveState(state);
+        localPlayer = { name, isAdmin };
+        btn.disabled = false;
+        render(state);
+      }
+
+      async function startVoting() {
+        const state = await window._fb.loadState();
+        state.phase = 'voting';
+        state.votes = {};
+        state.revealed = false;
+        await window._fb.saveState(state);
+      }
+
+      function selectTarget(name) {
+        pendingVote = name;
+        document.querySelectorAll('.vote-card').forEach(c => c.classList.remove('selected'));
+        event.currentTarget.classList.add('selected');
+        document.getElementById('confirm-name').textContent = name;
+        document.getElementById('confirm-panel').style.display = 'block';
+      }
+      function cancelVote() {
+        pendingVote = null;
+        document.querySelectorAll('.vote-card').forEach(c => c.classList.remove('selected'));
+        document.getElementById('confirm-panel').style.display = 'none';
+      }
+      async function confirmVote() {
+        if (!pendingVote || !localPlayer) return;
+        const state = await window._fb.loadState();
+        if ((state.votes||{})[localPlayer.name]) return;
+        if (!state.votes) state.votes = {};
+        state.votes[localPlayer.name] = pendingVote;
+        await window._fb.saveState(state);
+        pendingVote = null;
+      }
+
+      async function revealResults() {
+        const state = await window._fb.loadState();
+        state.phase = 'results';
+        state.revealed = true;
+        await window._fb.saveState(state);
+      }
+
+      async function eliminatePlayer() {
+        const state = await window._fb.loadState();
+        const counts = tally(state);
+        const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+        const max = sorted[0]?.[1] ?? 0;
+        const tied = sorted.filter(([,v]) => v === max);
+        const toElim = tied.length > 1
+          ? document.getElementById('tie-select').value
+          : sorted[0][0];
+
+        if (!state.eliminated) state.eliminated = [];
+        state.eliminated.push(toElim);
+        state.round++;
+        state.votes = {};
+        state.revealed = false;
+
+        const remaining = (state.players||[]).filter(p => !state.eliminated.includes(p.name));
+        if (remaining.length <= 2) {
+          const winner = remaining.find(p => !p.isAdmin);
+          state.phase = 'gameover';
+          state.winner = winner ? winner.name : remaining[0]?.name;
+        } else {
+          state.phase = 'lobby';
+        }
+        await window._fb.saveState(state);
+      }
+
+      async function fullReset() {
+        await window._fb.saveState(defaultState());
+        localPlayer = null;
+        showScreen('screen-signin');
+        document.getElementById('signin-name').value = '';
+      }
+
+      document.getElementById('signin-name').addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
+
+      // ── boot ─────────────────────────────────────────────────────
+      waitForFirebase(async () => {
+        const state = await window._fb.loadState();
+        render(state);
+        window._fb.subscribeState(s => render(s || defaultState()));
+        showScreen(localPlayer ? null : 'screen-signin');
+        if (!localPlayer) render(state);
+      });
+    </script>
+  </body>
+</html>
