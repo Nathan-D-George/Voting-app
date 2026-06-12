@@ -16,7 +16,7 @@
     import { getDatabase, ref, set, get, onValue }
       from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-      const firebaseConfig = {
+    const firebaseConfig = {
         apiKey: "AIzaSyAZP7bEXkgQnaRjtTcffdWUJbNqpW4_tUw",
         authDomain: "voting-app-2026-06.firebaseapp.com",
         databaseURL: "https://voting-app-2026-06-default-rtdb.firebaseio.com",
@@ -24,7 +24,7 @@
         storageBucket: "voting-app-2026-06.firebasestorage.app",
         messagingSenderId: "736864533190",
         appId: "1:736864533190:web:c541d53cb231d1893375c7"
-      };
+    };
 
     const app = initializeApp(firebaseConfig);
     const db  = getDatabase(app);
@@ -470,6 +470,20 @@
     document.getElementById(id).classList.add('active');
   }
 
+  // ── session persistence ────────────────────────────────────────
+  const SESSION_KEY = 'voting_game_session';
+  function saveSession() {
+    if (localPlayer && currentRoom) {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ localPlayer, currentRoom }));
+    }
+  }
+  function clearSession() {
+    localStorage.removeItem(SESSION_KEY);
+  }
+  function restoreSession() {
+    try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { return null; }
+  }
+
   // ── room link copy ─────────────────────────────────────────────
   function copyRoomLink() {
     const url = new URL(window.location.href);
@@ -500,7 +514,7 @@
       // detect kick
       if (localPlayer && !localPlayer.isAdmin) {
         const stillIn = (state.players||[]).find(p => p.name === localPlayer.name);
-        if (!stillIn) { localPlayer = null; currentRoom = null; showScreen('screen-kicked'); return; }
+        if (!stillIn) { localPlayer = null; currentRoom = null; clearSession(); showScreen('screen-kicked'); return; }
       }
       render(state);
     });
@@ -529,6 +543,7 @@
 
     currentRoom = room;
     localPlayer = { name: rawName, isAdmin: true, room };
+    saveSession();
     updateURL(room);
     subscribe(room);
 
@@ -565,6 +580,7 @@
 
     currentRoom = room;
     localPlayer = { name: rawName, isAdmin: false, room };
+    saveSession();
     updateURL(room);
     subscribe(room);
 
@@ -574,6 +590,7 @@
 
   function goToEntry() {
     localPlayer = null; currentRoom = null;
+    clearSession();
     updateURL(null);
     showScreen('screen-entry');
   }
@@ -804,6 +821,7 @@
   async function fullReset() {
     await window._fb.saveState(currentRoom, defaultState(currentRoom));
     localPlayer = null; currentRoom = null;
+    clearSession();
     updateURL(null);
     if (fbUnsub) { fbUnsub(); fbUnsub = null; }
     showScreen('screen-entry');
@@ -815,10 +833,28 @@
 
   // ── boot ───────────────────────────────────────────────────────
   waitForFirebase(async () => {
+    const session = restoreSession();
+    if (session && session.localPlayer && session.currentRoom) {
+      // verify they're still in the room in Firebase
+      const state = await window._fb.loadState(session.currentRoom);
+      if (state) {
+        const stillIn = (state.players||[]).find(p => p.name === session.localPlayer.name);
+        if (stillIn) {
+          localPlayer = session.localPlayer;
+          currentRoom = session.currentRoom;
+          updateURL(currentRoom);
+          subscribe(currentRoom);
+          render(state);
+          return;
+        }
+      }
+      // session stale (kicked or room gone) — clear it
+      clearSession();
+    }
+
     const urlRoom = new URLSearchParams(window.location.search).get('room');
     if (urlRoom) {
       const room = sanitizeRoom(urlRoom);
-      // pre-fill join tab with room name from URL
       switchTab('join');
       document.getElementById('join-room').value = room;
     }
